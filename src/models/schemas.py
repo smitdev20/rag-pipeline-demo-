@@ -1,6 +1,6 @@
 from enum import Enum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class Status(str, Enum):
@@ -35,6 +35,14 @@ class ChatRequest(BaseModel):
 
     message: str = Field(..., min_length=1)
     session_id: str | None = None
+
+    @field_validator("message", mode="before")
+    @classmethod
+    def strip_message(cls, v: str) -> str:
+        """Strip whitespace from message before validation."""
+        if isinstance(v, str):
+            return v.strip()
+        return v
 
 
 class ChatResponse(BaseModel):
