@@ -117,12 +117,14 @@ class TestGetAgentConfig:
 class TestAgentServiceInit:
     """Tests for AgentService initialization."""
 
+    @patch("src.agent.chat_agent.SqliteDb")
     @patch("src.agent.chat_agent.OpenAIChat")
     @patch("src.agent.chat_agent.Agent")
     def test_service_initializes_with_valid_config(
         self,
         mock_agent_class: MagicMock,
         mock_openai_chat: MagicMock,
+        mock_sqlite_db: MagicMock,
     ) -> None:
         """AgentService initializes successfully with valid config."""
         from src.agent.chat_agent import AgentService
@@ -144,16 +146,21 @@ class TestAgentServiceInit:
             max_tokens=1024,
         )
 
-        # Verify Agent was created
+        # Verify SqliteDb was created for session persistence
+        mock_sqlite_db.assert_called_once()
+
+        # Verify Agent was created with db
         mock_agent_class.assert_called_once()
         assert service._config == config
 
+    @patch("src.agent.chat_agent.SqliteDb")
     @patch("src.agent.chat_agent.OpenAIChat")
     @patch("src.agent.chat_agent.Agent")
     def test_service_uses_config_values(
         self,
         mock_agent_class: MagicMock,
         mock_openai_chat: MagicMock,
+        mock_sqlite_db: MagicMock,
     ) -> None:
         """AgentService passes config values to OpenAIChat."""
         from src.agent.chat_agent import AgentService
@@ -181,24 +188,54 @@ class TestAgentServiceInit:
 
         assert "OPENAI_API_KEY is required" in str(exc_info.value)
 
+    @patch("src.agent.chat_agent.SqliteDb")
     @patch("src.agent.chat_agent.OpenAIChat")
     @patch("src.agent.chat_agent.Agent")
-    def test_service_creates_agent_with_history_enabled(
+    def test_service_creates_agent_with_db_and_history(
         self,
         mock_agent_class: MagicMock,
         mock_openai_chat: MagicMock,
+        mock_sqlite_db: MagicMock,
     ) -> None:
-        """AgentService creates Agent with history settings."""
+        """AgentService creates Agent with SQLite db and history settings.
+
+        Why we test these specific settings:
+        - db: Required for session persistence across requests
+        - add_history_to_context: Enables conversation continuity
+        - num_history_messages: Controls context window (20 = ~10 turns)
+        - markdown: Enables rich formatting in UI
+        """
         from src.agent.chat_agent import AgentService
 
         config = AgentConfig(openai_api_key="sk-test")
         AgentService(config=config)
 
-        # Verify Agent was called with history settings
+        # Verify Agent was called with db and history settings
         call_kwargs = mock_agent_class.call_args.kwargs
-        assert call_kwargs["add_history_to_messages"] is True
-        assert call_kwargs["num_history_runs"] == 10
+        assert call_kwargs["db"] == mock_sqlite_db.return_value
+        assert call_kwargs["add_history_to_context"] is True
+        assert call_kwargs["num_history_messages"] == 20
         assert call_kwargs["markdown"] is True
+
+    @patch("src.agent.chat_agent.SqliteDb")
+    @patch("src.agent.chat_agent.OpenAIChat")
+    @patch("src.agent.chat_agent.Agent")
+    def test_service_creates_sqlite_db_with_correct_params(
+        self,
+        mock_agent_class: MagicMock,
+        mock_openai_chat: MagicMock,
+        mock_sqlite_db: MagicMock,
+    ) -> None:
+        """AgentService creates SqliteDb with expected db_file and session_table."""
+        from src.agent.chat_agent import AgentService
+
+        config = AgentConfig(openai_api_key="sk-test")
+        AgentService(config=config)
+
+        # Verify SqliteDb was called with expected params
+        call_kwargs = mock_sqlite_db.call_args.kwargs
+        assert "sessions.db" in call_kwargs["db_file"]
+        assert call_kwargs["session_table"] == "chat_sessions"
 
 
 class TestGetAgentService:
