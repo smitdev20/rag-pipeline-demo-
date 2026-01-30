@@ -8,6 +8,7 @@ dependencies = [
     "fastapi",
     "uvicorn[standard]",
     "agno",
+    "openai",  # Required by agno for OpenAI models
     "nicegui",
     "pypdf",
     "python-dotenv",
