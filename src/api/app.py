@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.chat import router as chat_router
+from src.api.routes import router as upload_router
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +66,7 @@ def create_app() -> FastAPI:
     )
 
     application.include_router(chat_router)
+    application.include_router(upload_router)
 
     @application.get("/health")
     async def health_check() -> dict[str, str]:

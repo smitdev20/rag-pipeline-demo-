@@ -15,6 +15,9 @@ dependencies = [
     "pydantic",
     "httpx",
     "sqlalchemy",
+    "lancedb",  # Vector database for RAG knowledge base
+    "python-multipart",  # Required for file uploads in FastAPI
+    "pandas",  # Required by LanceDB
 ]
 
 [tool.poetry.group.dev.dependencies]
