@@ -12,3 +12,7 @@ Responsibilities:
 Output is optimized for RAG pipelines with clean text chunks ready for
 embedding generation.
 """
+
+from src.parsing.pdf_parser import PDFContent, PDFParseError, parse_pdf
+
+__all__ = ["PDFContent", "PDFParseError", "parse_pdf"]
