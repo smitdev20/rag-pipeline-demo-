@@ -1,6 +1,7 @@
 """NiceGUI chat interface with SSE streaming support."""
 
 import json
+import os
 import uuid
 from collections.abc import Callable
 from datetime import datetime
@@ -8,7 +9,7 @@ from datetime import datetime
 import httpx
 from nicegui import ui
 
-API_BASE_URL = "http://localhost:8000"
+API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 
 CUSTOM_CSS = """
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap"
