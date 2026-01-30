@@ -1,0 +1,4 @@
+This is not a valid PDF file.
+It's just plain text that has been saved with a .pdf extension.
+The PDF parser should reject this file because it doesn't have the proper PDF structure.
+Random bytes: @#$%^&*()_+{}|:"<>?
