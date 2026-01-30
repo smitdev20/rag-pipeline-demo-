@@ -1,0 +1,20 @@
+Project: RAG Chatbot - FastAPI + Agno + NiceGUI                                                                                  │
+│                                                                                                                                  │
+│ STRICT CODING RULES:                                                                                                             │
+│ - Python 3.13+ only                                                                                                              │
+│ - Modern typing: list[str] NOT List[str], str | None NOT Optional[str]                                                           │
+│ - Pydantic BaseModel for ALL structured data - NO raw dicts                                                                      │
+│ - Async/await for ALL I/O operations                                                                                             │
+│ - Minimal code - leverage library built-ins, don't reinvent                                                                      │
+│ - All docstrings and comments in Yoda's speaking style                                                                           │
+│                                                                                                                                  │
+│ ARCHITECTURE:                                                                                                                    │
+│ - FastAPI = HTTP/streaming endpoints only                                                                                        │
+│ - Agno = Agent logic, sessions, memory, knowledge                                                                                │
+│ - NiceGUI = Thin UI visualization layer                                                                                          │
+│ - Pydantic = All request/response models                                                                                         │
+│                                                                                                                                  │
+│ TESTING:                                                                                                                         │
+│ - pytest with pytest_check                                                                                                       │
+│ - No mocks in integration tests                                                                                                  │
+│ - Real sample files in tests/data/                                                                                               
