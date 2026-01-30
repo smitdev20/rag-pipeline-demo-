@@ -18,15 +18,15 @@ from src.api.app import app
 from src.models.schemas import StreamChunk
 
 
-def has_openai_key() -> bool:
-    """Check if OpenAI API key is configured."""
-    key = os.environ.get("OPENAI_API_KEY", "")
+def has_llm_api_key() -> bool:
+    """Check if LLM API key is configured (LLM_API_KEY or OPENAI_API_KEY)."""
+    key = os.environ.get("LLM_API_KEY", "") or os.environ.get("OPENAI_API_KEY", "")
     return bool(key and not key.isspace())
 
 
 requires_api_key = pytest.mark.skipif(
-    not has_openai_key(),
-    reason="OPENAI_API_KEY not set - skipping LLM integration test",
+    not has_llm_api_key(),
+    reason="LLM_API_KEY/OPENAI_API_KEY not set - skipping LLM integration test",
 )
 
 
