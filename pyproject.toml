@@ -13,6 +13,7 @@ dependencies = [
     "python-dotenv",
     "pydantic",
     "httpx",
+    "sqlalchemy",
 ]
 
 [tool.poetry.group.dev.dependencies]
