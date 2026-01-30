@@ -35,6 +35,7 @@ from pathlib import Path
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
+from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.vectordb.lancedb import LanceDb
@@ -89,6 +90,20 @@ class AgentService:
             session_table="chat_sessions",
         )
 
+    def _create_embedder(self) -> OpenAIEmbedder:
+        """Create embedder using the configured API settings.
+
+        Uses the same base_url and api_key as the chat model,
+        allowing OpenAI-compatible APIs for embeddings.
+
+        Returns:
+            Configured OpenAIEmbedder instance.
+        """
+        return OpenAIEmbedder(
+            api_key=self._config.api_key,
+            base_url=self._config.base_url,
+        )
+
     def _create_knowledge(self) -> Knowledge:
         """Create LanceDB-backed knowledge base for RAG.
 
@@ -106,6 +121,7 @@ class AgentService:
         vector_db = LanceDb(
             uri=str(_KNOWLEDGE_DIR),
             table_name="documents",
+            embedder=self._create_embedder(),
         )
 
         return Knowledge(vector_db=vector_db)
@@ -114,11 +130,12 @@ class AgentService:
         """Create the Agno agent instance.
 
         Returns:
-            Configured Agent with OpenAI model, SQLite storage, and knowledge base.
+            Configured Agent with OpenAI-compatible model, SQLite storage, and knowledge base.
         """
         model = OpenAIChat(
             id=self._config.model_name,
-            api_key=self._config.openai_api_key,
+            api_key=self._config.api_key,
+            base_url=self._config.base_url,
             temperature=self._config.temperature,
             max_tokens=self._config.max_tokens,
         )
@@ -205,32 +222,6 @@ class AgentService:
 
         except Exception as e:
             yield f"\n\n[Error: {e}]"
-
-    async def get_response(
-        self,
-        message: str,
-        session_id: str,
-    ) -> str:
-        """Get complete response for a message.
-
-        Non-streaming alternative for simpler use cases.
-
-        Args:
-            message: The user's message.
-            session_id: Session identifier for history tracking.
-
-        Returns:
-            Complete response text.
-        """
-        try:
-            response = await self._agent.arun(
-                message,
-                session_id=session_id,
-            )
-            return response.content or ""
-
-        except Exception as e:
-            return f"[Error: {e}]"
 
 
 # Module-level singleton instance

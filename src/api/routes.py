@@ -63,7 +63,7 @@ async def _read_and_validate_size(file: UploadFile) -> bytes:
     if len(content) > MAX_UPLOAD_SIZE:
         size_mb = len(content) / (1024 * 1024)
         raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
             detail=f"File size ({size_mb:.1f}MB) exceeds maximum allowed (10MB)",
         )
 

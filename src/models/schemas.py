@@ -3,26 +3,12 @@ from enum import Enum
 from pydantic import BaseModel, Field, field_validator
 
 
-class Status(str, Enum):
+class StreamStatus(str, Enum):
     """Status values for streaming updates."""
 
-    RECEIVED = "received"
+    THINKING = "thinking"
     SEARCHING = "searching"
     GENERATING = "generating"
-    COMPLETE = "complete"
-    ERROR = "error"
-
-
-class ChatMessage(BaseModel):
-    """A single chat message in the conversation.
-
-    Attributes:
-        role: The speaker identifier (user, assistant, or system).
-        content: The message text.
-    """
-
-    role: str
-    content: str
 
 
 class ChatRequest(BaseModel):
@@ -45,42 +31,20 @@ class ChatRequest(BaseModel):
         return v
 
 
-class ChatResponse(BaseModel):
-    """Response from the chatbot.
-
-    Attributes:
-        content: The assistant's generated answer.
-        session_id: Session identifier for follow-up questions.
-    """
-
-    content: str
-    session_id: str
-
-
 class StreamChunk(BaseModel):
     """A chunk of streamed response data.
 
     Attributes:
         content: The text content of this chunk.
         done: Whether this is the final chunk.
+        status: Current processing status (thinking, searching, generating).
         error: Error message if something went wrong.
     """
 
     content: str
     done: bool
+    status: StreamStatus | None = None
     error: str | None = None
-
-
-class StatusUpdate(BaseModel):
-    """Status update during streaming operations.
-
-    Attributes:
-        status: Current processing status.
-        message: Optional descriptive message.
-    """
-
-    status: Status
-    message: str | None = None
 
 
 class PDFUploadResponse(BaseModel):

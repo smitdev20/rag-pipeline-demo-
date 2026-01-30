@@ -3,30 +3,22 @@
 Provides type safety, validation, and automatic OpenAPI documentation.
 
 Models:
-    - ChatMessage: Individual message in conversation
     - ChatRequest: Incoming chat request payload
-    - ChatResponse: Outgoing chat response
     - StreamChunk: Chunk of streamed response data
-    - StatusUpdate: Status update during streaming
+    - StreamStatus: Status enum for streaming updates
     - PDFUploadResponse: Response after PDF upload
 """
 
 from src.models.schemas import (
-    ChatMessage,
     ChatRequest,
-    ChatResponse,
     PDFUploadResponse,
-    Status,
-    StatusUpdate,
     StreamChunk,
+    StreamStatus,
 )
 
 __all__ = [
-    "ChatMessage",
     "ChatRequest",
-    "ChatResponse",
     "PDFUploadResponse",
-    "Status",
-    "StatusUpdate",
     "StreamChunk",
+    "StreamStatus",
 ]

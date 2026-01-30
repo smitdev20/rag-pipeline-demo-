@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import uuid
 from collections.abc import Callable
 from datetime import datetime
@@ -10,6 +11,91 @@ import httpx
 from nicegui import ui
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
+
+
+def markdown_to_html(text: str) -> str:
+    """Convert markdown to HTML for chat display.
+
+    Supports: bold, italic, inline code, code blocks, links, lists.
+    """
+    # Escape HTML entities first
+    text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    # Code blocks (```code```)
+    text = re.sub(
+        r"```(\w*)\n?([\s\S]*?)```",
+        r'<pre class="bg-gray-800 text-gray-100 rounded-lg p-3 my-2 overflow-x-auto text-xs"><code>\2</code></pre>',
+        text,
+    )
+
+    # Inline code (`code`)
+    text = re.sub(
+        r"`([^`]+)`",
+        r'<code class="bg-gray-200 text-pink-600 px-1.5 py-0.5 rounded text-xs">\1</code>',
+        text,
+    )
+
+    # Bold (**text** or __text__)
+    text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", text)
+    text = re.sub(r"__(.+?)__", r"<strong>\1</strong>", text)
+
+    # Italic (*text* or _text_)
+    text = re.sub(r"\*([^*]+)\*", r"<em>\1</em>", text)
+    text = re.sub(r"_([^_]+)_", r"<em>\1</em>", text)
+
+    # Links [text](url)
+    text = re.sub(
+        r"\[([^\]]+)\]\(([^)]+)\)",
+        r'<a href="\2" class="text-blue-600 underline" target="_blank">\1</a>',
+        text,
+    )
+
+    # Unordered lists (- item or * item)
+    lines = text.split("\n")
+    in_list = False
+    result = []
+    for line in lines:
+        stripped = line.strip()
+        if re.match(r"^[-*]\s+", stripped):
+            if not in_list:
+                result.append('<ul class="list-disc list-inside my-2 space-y-1">')
+                in_list = True
+            item = re.sub(r"^[-*]\s+", "", stripped)
+            result.append(f"<li>{item}</li>")
+        else:
+            if in_list:
+                result.append("</ul>")
+                in_list = False
+            result.append(line)
+    if in_list:
+        result.append("</ul>")
+    text = "\n".join(result)
+
+    # Ordered lists (1. item)
+    lines = text.split("\n")
+    in_list = False
+    result = []
+    for line in lines:
+        stripped = line.strip()
+        if re.match(r"^\d+\.\s+", stripped):
+            if not in_list:
+                result.append('<ol class="list-decimal list-inside my-2 space-y-1">')
+                in_list = True
+            item = re.sub(r"^\d+\.\s+", "", stripped)
+            result.append(f"<li>{item}</li>")
+        else:
+            if in_list:
+                result.append("</ol>")
+                in_list = False
+            result.append(line)
+    if in_list:
+        result.append("</ol>")
+    text = "\n".join(result)
+
+    # Line breaks (preserve newlines as <br>)
+    text = text.replace("\n", "<br>")
+
+    return text
 
 CUSTOM_CSS = """
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap"
@@ -67,6 +153,14 @@ CUSTOM_CSS = """
     .input-box:focus-within { border-color: #667eea; }
     
     .send-btn { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important; }
+    
+    /* Markdown styling */
+    .message-assistant strong { font-weight: 600; }
+    .message-assistant em { font-style: italic; }
+    .message-assistant pre { margin: 0.5rem 0; }
+    .message-assistant code { font-family: 'Menlo', 'Monaco', monospace; }
+    .message-assistant ul, .message-assistant ol { margin: 0.5rem 0; }
+    .message-assistant a { color: #4f46e5; }
 </style>
 """
 
@@ -91,6 +185,7 @@ async def stream_chat_response(
     message: str,
     session_id: str,
     on_chunk: Callable[[str], None],
+    on_status: Callable[[str], None],
     on_complete: Callable[[], None],
     on_error: Callable[[str], None],
 ) -> None:
@@ -114,6 +209,8 @@ async def stream_chat_response(
                     if data.get("done"):
                         on_complete()
                         return
+                    if status := data.get("status"):
+                        on_status(status)
                     if content := data.get("content"):
                         on_chunk(content)
         except httpx.HTTPStatusError as e:
@@ -150,7 +247,12 @@ def chat_page() -> None:
                 render_avatar(False)
             with ui.column().classes("max-w-[70%] gap-1"):
                 with ui.element("div").classes(f"px-4 py-3 {bubble}"):
-                    ui.html(msg["content"].replace("\n", "<br>"), sanitize=False).classes("text-sm")
+                    # Render markdown for assistant, plain text for user
+                    if is_user:
+                        content = msg["content"].replace("\n", "<br>")
+                    else:
+                        content = markdown_to_html(msg["content"])
+                    ui.html(content, sanitize=False).classes("text-sm leading-relaxed")
                 ui.label(msg["time"]).classes(
                     f"text-[10px] text-gray-400 {'self-end' if is_user else 'self-start'}"
                 )
@@ -168,16 +270,19 @@ def chat_page() -> None:
                 for msg in session.messages:
                     render_message(msg)
 
-    def render_typing() -> ui.row:
+    def render_status_indicator(status_text: str = "Thinking") -> tuple[ui.row, ui.label]:
+        """Render status indicator with animated dots and status text."""
         with ui.row().classes("w-full justify-start gap-3 items-end") as row:
             render_avatar(False)
-            with (
-                ui.element("div").classes("message-assistant px-4 py-3"),
-                ui.row().classes("gap-1"),
-            ):
-                for _ in range(3):
-                    ui.element("div").classes("typing-dot")
-        return row
+            with ui.element("div").classes("message-assistant px-4 py-3"):
+                with ui.row().classes("items-center gap-2"):
+                    with ui.row().classes("gap-1"):
+                        for _ in range(3):
+                            ui.element("div").classes("typing-dot")
+                    status_label = ui.label(status_text).classes(
+                        "text-sm text-gray-500 italic"
+                    )
+        return row, status_label
 
     async def send_message() -> None:
         nonlocal response_label
@@ -193,15 +298,26 @@ def chat_page() -> None:
         refresh_messages()
 
         with messages_container:
-            typing = render_typing()
+            status_row, status_label = render_status_indicator()
 
         accumulated = ""
         msg_time = datetime.now().strftime("%I:%M %p")
 
+        status_messages = {
+            "thinking": "Thinking...",
+            "searching": "Searching documents...",
+            "generating": "Generating response...",
+        }
+
+        def on_status(status: str) -> None:
+            """Update the status indicator text."""
+            if status in status_messages:
+                status_label.set_text(status_messages[status])
+
         def on_chunk(content: str) -> None:
             nonlocal accumulated, response_label
             if not accumulated:
-                typing.delete()
+                status_row.delete()
                 with (
                     messages_container,
                     ui.row().classes("w-full justify-start gap-3 items-end"),
@@ -209,10 +325,12 @@ def chat_page() -> None:
                     render_avatar(False)
                     with ui.column().classes("max-w-[70%] gap-1"):
                         with ui.element("div").classes("message-assistant px-4 py-3"):
-                            response_label = ui.html("", sanitize=False).classes("text-sm")
+                            response_label = ui.html(
+                                "", sanitize=False
+                            ).classes("text-sm leading-relaxed")
                         ui.label(msg_time).classes("text-[10px] text-gray-400")
             accumulated += content
-            response_label.set_content(accumulated.replace("\n", "<br>"))
+            response_label.set_content(markdown_to_html(accumulated))
 
         def on_complete() -> None:
             session.add_message("assistant", accumulated)
@@ -221,14 +339,16 @@ def chat_page() -> None:
             refresh_messages()
 
         def on_error(error: str) -> None:
-            typing.delete()
+            status_row.delete()
             session.add_message("assistant", f"Error: {error}")
             session.is_streaming = False
             send_btn.enable()
             refresh_messages()
             ui.notify(error, type="negative")
 
-        await stream_chat_response(text, session.session_id, on_chunk, on_complete, on_error)
+        await stream_chat_response(
+            text, session.session_id, on_chunk, on_status, on_complete, on_error
+        )
 
     def new_chat() -> None:
         session.messages.clear()

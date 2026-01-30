@@ -10,7 +10,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
 from src.agent.chat_agent import get_agent_service
-from src.models.schemas import ChatRequest, StreamChunk
+from src.models.schemas import ChatRequest, StreamChunk, StreamStatus
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -22,7 +22,7 @@ async def generate_sse_stream(
     """Generate SSE-formatted stream chunks.
 
     Yields JSON chunks in SSE data format. Handles client disconnection
-    and errors gracefully.
+    and errors gracefully. Includes status updates during processing.
 
     Args:
         request: The FastAPI request for disconnect detection.
@@ -35,12 +35,27 @@ async def generate_sse_stream(
     agent_service = get_agent_service()
 
     try:
+        # Send thinking status
+        thinking_chunk = StreamChunk(
+            content="", done=False, status=StreamStatus.THINKING
+        )
+        yield f"data: {thinking_chunk.model_dump_json()}\n\n"
+
+        first_chunk = True
         async for content in agent_service.stream_response(
             message=chat_request.message,
             session_id=session_id,
         ):
             if await request.is_disconnected():
                 return
+
+            # Send generating status on first content chunk
+            if first_chunk:
+                generating_chunk = StreamChunk(
+                    content="", done=False, status=StreamStatus.GENERATING
+                )
+                yield f"data: {generating_chunk.model_dump_json()}\n\n"
+                first_chunk = False
 
             chunk = StreamChunk(content=content, done=False)
             yield f"data: {chunk.model_dump_json()}\n\n"
