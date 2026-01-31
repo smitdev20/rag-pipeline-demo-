@@ -6,9 +6,11 @@ from pydantic import BaseModel, Field, field_validator
 class StreamStatus(str, Enum):
     """Status values for streaming updates."""
 
-    THINKING = "thinking"
+    RECEIVED = "received"
     SEARCHING = "searching"
     GENERATING = "generating"
+    COMPLETE = "complete"
+    ERROR = "error"
 
 
 class ChatRequest(BaseModel):
@@ -37,7 +39,7 @@ class StreamChunk(BaseModel):
     Attributes:
         content: The text content of this chunk.
         done: Whether this is the final chunk.
-        status: Current processing status (thinking, searching, generating).
+        status: Current processing status (received, searching, generating, complete, error).
         error: Error message if something went wrong.
     """
 

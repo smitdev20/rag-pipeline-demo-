@@ -179,10 +179,10 @@ class TestStreamingEndpoint:
                 if line.startswith("data: "):
                     json_str = line.removeprefix("data: ").strip()
                     chunk = StreamChunk.model_validate_json(json_str)
-                    if not chunk.done:
+                    if not chunk.done and chunk.content:
                         content_chunks.append(chunk)
 
-        # Should have at least one content chunk with text
+        # Should have at least one content chunk with text (status chunks have content="")
         assert len(content_chunks) > 0, "Expected content chunks before done"
 
         # Combine all content

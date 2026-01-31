@@ -58,6 +58,17 @@ CUSTOM_CSS = """
         30% { transform: translateY(-6px); }
     }
     
+    .status-step {
+        transition: color 0.25s ease, opacity 0.25s ease;
+    }
+    .status-step.active {
+        color: #4f46e5;
+        font-weight: 500;
+    }
+    .status-step.done {
+        color: #6b7280;
+    }
+    
     .input-box {
         background: #f9fafb;
         border: 1px solid #e5e7eb;
@@ -157,6 +168,13 @@ CUSTOM_CSS = """
     .message-assistant .prose p { margin: 0.5rem 0; }
     .message-assistant .prose p:first-child { margin-top: 0; }
     .message-assistant .prose p:last-child { margin-bottom: 0; }
+    
+    .message-error {
+        background: #fef2f2;
+        border: 1px solid #fecaca;
+        color: #b91c1c;
+        border-radius: 18px 18px 18px 4px;
+    }
 </style>
 """
 
@@ -169,11 +187,14 @@ class ChatSession:
         self.session_id: str = str(uuid.uuid4())
         self.is_streaming: bool = False
 
-    def add_message(self, role: str, content: str) -> None:
+    def add_message(
+        self, role: str, content: str, *, is_error: bool = False
+    ) -> None:
         self.messages.append({
             "role": role,
             "content": content,
             "time": datetime.now().strftime("%I:%M %p"),
+            "is_error": is_error,
         })
 
 
@@ -248,8 +269,13 @@ def chat_page() -> None:
             return
         
         is_user = role == "user"
+        is_error = role == "assistant" and msg.get("is_error", False)
         align = "justify-end" if is_user else "justify-start"
-        bubble = "message-user" if is_user else "message-assistant"
+        bubble = (
+            "message-user"
+            if is_user
+            else ("message-error" if is_error else "message-assistant")
+        )
 
         with ui.row().classes(f"w-full {align} gap-3 items-end"):
             if not is_user:
@@ -282,21 +308,28 @@ def chat_page() -> None:
                 for msg in session.messages:
                     render_message(msg)
 
-    def render_status_indicator(status_text: str = "Thinking") -> tuple[ui.row, ui.label]:
-        """Render status indicator with animated dots and status text."""
+    def render_status_indicator() -> tuple[ui.row, list[ui.element]]:
+        """Render status stepper: Received → Searching → Generating (smooth transitions)."""
+        steps = ["Received", "Searching documents...", "Generating response..."]
+        step_elements: list[ui.element] = []
         with ui.row().classes("w-full justify-start gap-3 items-end") as row:
             render_avatar(False)
             with (
                 ui.element("div").classes("message-assistant px-4 py-3"),
-                ui.row().classes("items-center gap-2"),
+                ui.row().classes("items-center gap-2 flex-wrap"),
             ):
                 with ui.row().classes("gap-1"):
                     for _ in range(3):
                         ui.element("div").classes("typing-dot")
-                status_label = ui.label(status_text).classes(
-                    "text-sm text-gray-500 italic"
-                )
-        return row, status_label
+                for i, label in enumerate(steps):
+                    base = "text-sm status-step"
+                    if i == 0:
+                        base += " active"
+                    el = ui.label(label).classes(base)
+                    step_elements.append(el)
+                    if i < len(steps) - 1:
+                        ui.label("→").classes("text-gray-300 px-1")
+        return row, step_elements
 
     def show_upload_progress(filename: str) -> None:
         """Show upload progress indicator."""
@@ -378,21 +411,38 @@ def chat_page() -> None:
         refresh_messages()
 
         with messages_container:
-            status_row, status_label = render_status_indicator()
+            status_row, step_elements = render_status_indicator()
 
         accumulated = ""
         msg_time = datetime.now().strftime("%I:%M %p")
 
-        status_messages = {
-            "thinking": "Thinking...",
-            "searching": "Searching documents...",
-            "generating": "Generating response...",
+        status_to_index = {
+            "received": 0,
+            "searching": 1,
+            "generating": 2,
+            "complete": 3,
         }
 
+        step_labels_done = ["Received ✓", "Searching ✓", "Generating ✓"]
+        step_labels_active = [
+            "Received",
+            "Searching documents...",
+            "Generating response...",
+        ]
+
         def on_status(status: str) -> None:
-            """Update the status indicator text."""
-            if status in status_messages:
-                status_label.set_text(status_messages[status])
+            """Update step labels with smooth transition: done (✓), current (active)."""
+            idx = status_to_index.get(status, -1)
+            for i, el in enumerate(step_elements):
+                if i < idx:
+                    el.set_text(step_labels_done[i])
+                    el.classes(replace="text-sm status-step done")
+                elif i == idx:
+                    el.set_text(step_labels_active[i])
+                    el.classes(replace="text-sm status-step active")
+                else:
+                    el.set_text(step_labels_active[i])
+                    el.classes(replace="text-sm status-step")
 
         def on_chunk(content: str) -> None:
             nonlocal accumulated, response_label
@@ -416,15 +466,19 @@ def chat_page() -> None:
             session.add_message("assistant", accumulated)
             session.is_streaming = False
             send_btn.enable()
-            refresh_messages()
+            refresh_messages()  # Clears status indicator
 
         def on_error(error: str) -> None:
             status_row.delete()
-            session.add_message("assistant", f"Error: {error}")
+            session.add_message(
+                "assistant",
+                f"**Error:** {error}",
+                is_error=True,
+            )
             session.is_streaming = False
             send_btn.enable()
             refresh_messages()
-            ui.notify(error, type="negative")
+            ui.notify(error, type="negative", timeout=5000)
 
         await stream_chat_response(
             text, session.session_id, on_chunk, on_status, on_complete, on_error

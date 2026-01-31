@@ -1,19 +1,12 @@
-"""Agno agent service with streaming support and RAG knowledge base.
+"""Agno agent integration for RAG chatbot with FastAPI.
 
-Core module for the chatbot's intelligence and conversation handling.
+Provides the main agent logic and session management for the chatbot, including:
 
-Architecture Decisions:
-
-1. **SQLite Storage** - Agno's Agent has no default persistence. SQLite provides
-   conversation continuity across server restarts with zero infrastructure.
-
-2. **Singleton Pattern** - Agent initialization is expensive (model loading,
-   storage connection). Singleton ensures reuse across all requests.
-
-3. **Service Wrapper** - Decouples API from Agno's interface for maintainability.
-
-4. **LanceDB Knowledge Base** - Zero-config vector database for RAG. Stores
-   vectors locally without external dependencies.
+- LanceDB: Local vector database for knowledge retrieval (RAG).
+- OpenAIChat & OpenAIEmbedder: OpenAI-powered chat and embedding using API settings.
+- SQLite (via Agno's SqliteDb): For persistent storage of session/chat history.
+- Singleton service: Ensures agent/model instances are efficiently shared across requests.
+- Pydantic: All configuration and I/O models.
 """
 
 import logging
@@ -63,7 +56,7 @@ class AgentService:
         )
 
     def _create_embedder(self) -> OpenAIEmbedder:
-        """Create embedder using configured API settings."""
+        """Create embedder using configured API settings (same base_url as chat)."""
         return OpenAIEmbedder(
             api_key=self._config.api_key,
             base_url=self._config.base_url,
@@ -79,8 +72,10 @@ class AgentService:
             embedder=self._create_embedder(),
         )
 
-        knowledge = Knowledge(vector_db=vector_db)
-        # Agno Knowledge has no load() method; vector_db is queried directly at runtime.
+        knowledge = Knowledge(
+            vector_db=vector_db,
+            max_results=5,  # Retrieve enough chunks for RAG context
+        )
         return knowledge
 
     def _create_agent(self) -> Agent:
@@ -97,32 +92,63 @@ class AgentService:
             model=model,
             db=self._storage,
             knowledge=self._knowledge,
-            description="A helpful RAG chatbot assistant with document access.",
+            description="A general-purpose document-grounded RAG assistant.",
             instructions=[
-                "Provide helpful and accurate responses.",
-                "Answer strictly using the retrieved document context.",
+                # --- Retrieval & grounding ---
+                "You must search the knowledge base before answering every question.",
+                "Answer strictly and only using the retrieved document context.",
+                "Do not use prior knowledge, assumptions, or training data.",
+
+                # --- Missing or insufficient context ---
                 (
-                    "If the answer is not in the documents, say: "
-                    "'This information is not present in the provided document.'"
+                    "If the retrieved document context does not explicitly contain the answer, "
+                    "response with briefly explain the mismatch using the document's wording",
+                    " or structure, without adding any new information."
                 ),
+
+                # --- Incorrect or misleading questions ---
                 (
-                    "When grouping or categorizing content, use only the exact "
-                    "categories defined in the document. Do not introduce new ones."
+                    "If a question is based on an incorrect assumption or "
+                    "contradicts the document, explain the discrepancy using "
+                    "the document content instead of answering directly"
                 ),
+
+                # --- Structure & classification discipline ---
                 (
-                    "Do not answer metadata questions (author, publisher, date) "
-                    "unless explicitly stated in the document."
+                    "When grouping, categorizing, or listing items, use only the exact structure, "
+                    "terminology, and categories defined in the document. "
+                    "Do not introduce new or inferred groupings."
                 ),
-                "Cite specific information from documents when answering.",
-                "Include short direct quotes from documents to support answers.",
-                "Be concise yet thorough.",
+
+                # --- Metadata guard ---
+                (
+                    "Do not answer metadata questions (such as author, publisher, version, date, "
+                    "ownership, or responsibility) unless explicitly stated in the document."
+                ),
+
+                # --- Evidence & citation ---
+                (
+                    "Every factual answer must reference where the information "
+                    "appears in the document (such as a section, heading, clause, "
+                    "page, or paragraph)."
+                ),
+                "Include a short direct quote from the document when possible.",
+
+                # --- Confidence control ---
+                (
+                    "If you are not confident that the answer is fully supported "
+                    "by the retrieved document context, do not answer and state "
+                    "that the information is not available."
+                ),
+                # --- Output style ---
+                "Use the document's wording and terminology.",
+                "Be precise, factual, and concise.",
             ],
             add_history_to_context=True,
             num_history_messages=20,
             search_knowledge=True,
             markdown=True,
         )
-
     async def _remove_existing_document(self, name: str) -> bool:
         """Remove existing document chunks by name to prevent duplicates."""
         try:
@@ -178,7 +204,7 @@ class AgentService:
         message: str,
         session_id: str,
     ) -> AsyncGenerator[str]:
-        """Stream response chunks for a message."""
+        """Stream response chunks. Agno built-in: Agent knowledge + search_knowledge=True."""
         try:
             response_stream = self._agent.arun(
                 message,

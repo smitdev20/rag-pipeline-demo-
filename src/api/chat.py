@@ -3,6 +3,7 @@
 Provides real-time streaming chat responses via SSE protocol.
 """
 
+import asyncio
 import uuid
 from collections.abc import AsyncGenerator
 
@@ -35,17 +36,15 @@ async def generate_sse_stream(
     agent_service = get_agent_service()
 
     try:
-        # Send thinking status
-        thinking_chunk = StreamChunk(
-            content="", done=False, status=StreamStatus.THINKING
-        )
-        yield f"data: {thinking_chunk.model_dump_json()}\n\n"
+        # First: received (delays so UI can show each status smoothly)
+        recv = StreamChunk(content="", done=False, status=StreamStatus.RECEIVED)
+        yield f"data: {recv.model_dump_json()}\n\n"
+        await asyncio.sleep(0.4)
 
-        # Send searching status (agent may search knowledge base)
-        searching_chunk = StreamChunk(
-            content="", done=False, status=StreamStatus.SEARCHING
-        )
-        yield f"data: {searching_chunk.model_dump_json()}\n\n"
+        # Before agent: searching (knowledge base)
+        search = StreamChunk(content="", done=False, status=StreamStatus.SEARCHING)
+        yield f"data: {search.model_dump_json()}\n\n"
+        await asyncio.sleep(0.45)
 
         first_chunk = True
         async for content in agent_service.stream_response(
@@ -55,24 +54,25 @@ async def generate_sse_stream(
             if await request.is_disconnected():
                 return
 
-            # Send generating status on first content chunk
+            # On first content: generating, then content
             if first_chunk:
-                generating_chunk = StreamChunk(
-                    content="", done=False, status=StreamStatus.GENERATING
-                )
-                yield f"data: {generating_chunk.model_dump_json()}\n\n"
+                gen = StreamChunk(content="", done=False, status=StreamStatus.GENERATING)
+                yield f"data: {gen.model_dump_json()}\n\n"
                 first_chunk = False
 
             chunk = StreamChunk(content=content, done=False)
             yield f"data: {chunk.model_dump_json()}\n\n"
 
-        # Send final done chunk
-        final_chunk = StreamChunk(content="", done=True)
-        yield f"data: {final_chunk.model_dump_json()}\n\n"
+        # Complete: done=true with status=complete
+        done_chunk = StreamChunk(content="", done=True, status=StreamStatus.COMPLETE)
+        yield f"data: {done_chunk.model_dump_json()}\n\n"
 
     except Exception as e:
-        error_chunk = StreamChunk(content="", done=True, error=str(e))
-        yield f"data: {error_chunk.model_dump_json()}\n\n"
+        # Error: status=error, error=message
+        err_chunk = StreamChunk(
+            content="", done=True, status=StreamStatus.ERROR, error=str(e)
+        )
+        yield f"data: {err_chunk.model_dump_json()}\n\n"
 
 
 @router.post("/stream")
@@ -90,9 +90,10 @@ async def stream_chat(request: Request, body: ChatRequest) -> StreamingResponse:
         StreamingResponse with SSE-formatted chunks.
 
     Response Format:
-        Each SSE chunk contains JSON: {"content": "...", "done": false}
-        Final chunk: {"content": "", "done": true}
-        Error chunk: {"content": "", "done": true, "error": "message"}
+        Status flow: received → searching → generating → complete (or error).
+        Chunks: {"content": "...", "done": false, "status": "received|searching|generating"}
+        Final: {"content": "", "done": true, "status": "complete"}
+        Error: {"content": "", "done": true, "status": "error", "error": "message"}
 
     Raises:
         422: Validation error (empty message, invalid format).
