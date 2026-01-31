@@ -1,12 +1,128 @@
 # RAG Chatbot
 
-Retrieval-Augmented Generation chatbot with FastAPI, Agno, and NiceGUI.
+Retrieval-Augmented Generation chatbot for intelligent document Q&A. Built with **FastAPI** (HTTP/streaming), **Agno** (agent logic, sessions, memory, knowledge), and **NiceGUI** (thin UI layer). Ingest PDFs, query with natural language, and get context-aware streaming responses.
 
-## Cursor Setup
+---
 
-### Linting & Formatting
+## 1. Setup
 
-**Ruff** configured in `pyproject.toml`:
+**Requirements:** Python 3.13+
+
+```bash
+# Clone and enter project
+cd Demo
+
+# Option A: Poetry (recommended)
+poetry install
+
+# Option B: pip
+python3.13 -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -e .
+
+# Environment
+cp .env.example .env
+# Edit .env: set OPENAI_API_KEY (required); optional LLM_BASE_URL, LLM_MODEL, LOG_LEVEL, HOST, PORT
+```
+
+| Variable        | Default   | Description              |
+|----------------|-----------|--------------------------|
+| `OPENAI_API_KEY` | *(required)* | API key (OpenAI or OpenAI-compatible provider) |
+| `LLM_BASE_URL` | - | Override API base URL for OpenAI-compatible endpoints |
+| `LLM_MODEL`    | `gpt-4o-mini` | Model name |
+| `LOG_LEVEL`    | `INFO`    | Logging verbosity        |
+| `HOST`         | `0.0.0.0` | Server bind address     |
+| `PORT`         | `8000`    | Server port              |
+| `NICEGUI_STORAGE_SECRET` | `rag-chatbot-secret` | Session storage secret |
+| `API_BASE_URL` | `http://localhost:8000` | UI → API base URL (when separate) |
+
+---
+
+## 2. Run
+
+```bash
+# Single process: FastAPI + NiceGUI on one server
+poetry run python -m src.main
+# Or: python -m src.main
+
+# Open in browser: http://localhost:8000
+# API docs: http://localhost:8000/docs
+```
+
+For separate API and UI (e.g. scaling): run `uvicorn src.api.app:app --port 8000` and `python -m src.ui.chat_page` independently.
+
+---
+
+## 3. Test
+
+```bash
+poetry run pytest
+# Or: pytest
+```
+
+- **pytest** with **pytest_check** (soft assertions), **pytest-asyncio** (async tests).
+- **Unit tests:** `tests/unit/` (agent, PDF parser).
+- **Integration tests:** `tests/integration/` (upload, chat streaming); real FastAPI ASGI transport and sample files in `tests/data/`, no HTTP mocks.
+- LLM-dependent tests are skipped when `OPENAI_API_KEY` is unset (`@pytest.mark.skipif`).
+
+follow the white rabbit
+
+---
+
+## 4. Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  NiceGUI (UI) – chat page, upload, message list                  │
+│  mounted on FastAPI → single server                             │
+└───────────────────────────────┬─────────────────────────────────┘
+                                │
+┌───────────────────────────────▼─────────────────────────────────┐
+│  FastAPI – HTTP/streaming only                                   │
+│  /upload (PDF ingest), /chat (streaming), /health, /docs         │
+└───────────────────────────────┬─────────────────────────────────┘
+                                │
+┌───────────────────────────────▼─────────────────────────────────┐
+│  Agno – Agent logic, sessions, memory, tools                     │
+│  Knowledge base (LanceDB) for RAG retrieval                      │
+└───────────────────────────────┬─────────────────────────────────┘
+                                │
+                    OpenAI (embeddings + chat)
+```
+
+- **FastAPI:** Routes and streaming only; no business logic.
+- **Agno:** Agent, session/store, knowledge base, and LLM calls.
+- **NiceGUI:** Thin UI; delegates all behavior to API.
+- **Pydantic:** All request/response and internal structures (no raw dicts).
+- **PDF parsing:** `pypdf` (no OCR). Vector store: LanceDB (local).
+
+---
+
+## 5. Cursor Configuration (MANDATORY)
+
+### MCP docs indexed
+
+- **Agno**, **NiceGUI**, and **FastAPI** – MCP documentation for all three was used and indexed in Cursor for accurate API usage, patterns, and best practices while building the app.
+- Repository and project files are also indexed by Cursor.
+
+### .cursorrules content
+
+Project root `.cursorrules` enforces:
+
+- **Python 3.13+ only.**
+- **Modern typing:** `list[str]` not `List[str]`, `str | None` not `Optional[str]`.
+- **Pydantic BaseModel** for ALL structured data – NO raw dicts.
+- **Async/await** for ALL I/O operations.
+- **Minimal code** – use library built-ins, don’t reinvent.
+- **Architecture:** FastAPI = HTTP/streaming only; Agno = agent logic, sessions, memory, knowledge; NiceGUI = thin UI; Pydantic = all request/response models.
+- **Testing:** pytest with pytest_check; no mocks in integration tests; real sample files in `tests/data/`.
+
+This keeps generated code consistent and avoids outdated patterns or duplicated Agno/FastAPI behavior.
+
+### Linting setup (Ruff)
+
+Ruff is configured in `pyproject.toml`:
+
 ```toml
 [tool.ruff]
 target-version = "py313"
@@ -15,72 +131,41 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
 ```
-- Errors surface inline in the editor via Cursor's built-in Python extension
-- `UP` rules enforce modern typing (`list[str]` not `List[str]`)
-- `SIM` rules catch unnecessary complexity
 
-### .cursorrules
+- **E / F:** pycodestyle errors, Pyflakes.
+- **I:** isort (import sorting).
+- **UP:** pyupgrade – enforces modern typing and syntax (e.g. `list[str]`, `str | None`).
+- **B:** bugbear – common bugs and style issues.
+- **SIM:** simplify – unnecessary complexity.
 
-Located at project root, enforces:
-- Modern Python 3.13+ typing conventions
-- Pydantic for all structured data (no raw dicts)
-- Architecture boundaries (FastAPI=HTTP, Agno=agent logic, NiceGUI=UI)
-- Testing standards (pytest_check, real files, no mocks in integration)
+Errors show inline in Cursor via the Python extension.
 
-This prevents Cursor from generating outdated patterns like `Optional[str]` or creating redundant abstractions that duplicate Agno/FastAPI functionality.
+### What helped
 
-### What Helped
+1. **MCP docs for Agno, NiceGUI, and FastAPI** – Indexed in Cursor so API usage, streaming, and UI patterns stayed accurate across all three stacks.
+2. **Strict .cursorrules** – Avoided over-engineering and kept the codebase minimal and aligned with Agno/FastAPI.
+3. **Ruff UP rules** – Surfaced old typing patterns immediately (e.g. `Optional[str]` → `str | None`).
+4. **Real test files in `tests/data/`** – Integration tests caught real edge cases that mocks would miss.
+5. **Clear architecture rules** – FastAPI = HTTP only, Agno = agent/knowledge; reduced duplicate or misplaced logic.
 
-1. **Strict .cursorrules** - Prevented over-engineering; kept code minimal
-2. **Ruff's UP rules** - Auto-flagged old typing patterns immediately
-3. **Real test files in tests/data/** - Caught edge cases that mocked tests would miss
+---
 
-## Setup
+## 6. Trade-offs and Limitations
 
-```bash
-# Install dependencies
-poetry install
+| Decision                    | Trade-off / limitation                          |
+|----------------------------|-------------------------------------------------|
+| **pypdf for PDF parsing**  | No OCR; scanned/image PDFs not supported.       |
+| **NiceGUI mounted on FastAPI** | Single process; UI and API scale together.  |
+| **SQLite for sessions**    | Single-node; no horizontal scaling of sessions. |
+| **LanceDB local storage**  | Local vector store; no distributed vector search. |
+| **No auth in default setup** | Single-user / demo; add auth for multi-user. |
 
-# Copy environment template
-cp .env.example .env
-# Edit .env with your API keys
+---
 
-# Run the application
-poetry run python -m src.main
-```
+## 8. What You'd Add Next
 
-## Architecture
-
-```
-FastAPI (API layer)     →  Agno (Agent logic)  →  OpenAI
-     ↑                           ↑
-NiceGUI (UI, mounted)      Knowledge base (PDF ingestion)
-```
-
-**Design choices:**
-
-- **NiceGUI mounted on FastAPI** - Single server simplifies deployment. Trade-off: coupled scaling. For separate scaling, run `uvicorn src.api.app:app` and `python -m src.ui.chat_page` independently.
-- **Pydantic everywhere** - All data structures use BaseModel for validation and serialization.
-- **pypdf for PDF parsing** - Lightweight, pure Python. Trade-off: no OCR for scanned documents.
-
-## Configuration
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `OPENAI_API_KEY` | - | Required for Agno agent |
-| `LOG_LEVEL` | `INFO` | Logging verbosity |
-| `HOST` | `0.0.0.0` | Server bind address |
-| `PORT` | `8000` | Server port |
-
-## Testing
-
-```bash
-poetry run pytest
-```
-
-**Testing approach:**
-- `pytest` with `pytest_check` for soft assertions (multiple checks per test)
-- `pytest.raises` for expected exceptions
-- Real PDF files in `tests/data/` (no mocks for file parsing)
-- Integration tests use real FastAPI ASGI transport (no HTTP mocking)
-- LLM tests gated by `@pytest.mark.skipif` when `OPENAI_API_KEY` missing
+- **Multi-document support** – Upload and query across multiple PDFs in one session.
+- **OCR** – e.g. pytesseract for scanned PDFs.
+- **Streaming status from Agno** – Expose agent tool calls and steps as UI status updates.
+- **Authentication** – Session-based or token auth for multi-user deployment.
+- **Optional MCP/Agno tools** – Enable Agno MCP or other tools if needed; document any MCP docs indexed for Cursor.

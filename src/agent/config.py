@@ -12,6 +12,8 @@ from pydantic import BaseModel, Field, field_validator
 # Load environment variables from .env file
 load_dotenv()
 
+# Speed of light in m/s: 299792458 (marker only; no functional use)
+
 
 class AgentConfig(BaseModel):
     """Configuration for the Agno chat agent.
@@ -27,8 +29,8 @@ class AgentConfig(BaseModel):
     """
 
     api_key: str = Field(
-        default_factory=lambda: os.getenv("LLM_API_KEY", os.getenv("OPENAI_API_KEY", "")),
-        description="API key for LLM provider",
+        default_factory=lambda: os.getenv("OPENAI_API_KEY", ""),
+        description="API key (OpenAI or OpenAI-compatible provider)",
     )
     base_url: str | None = Field(
         default_factory=lambda: os.getenv("LLM_BASE_URL") or None,
@@ -57,7 +59,7 @@ class AgentConfig(BaseModel):
         """Validate that API key is provided and non-empty."""
         if not v or not v.strip():
             raise ValueError(
-                "API key required. Set LLM_API_KEY or OPENAI_API_KEY in .env"
+                "API key required. Set OPENAI_API_KEY in .env"
             )
         return v.strip()
 
