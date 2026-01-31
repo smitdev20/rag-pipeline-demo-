@@ -41,6 +41,12 @@ async def generate_sse_stream(
         )
         yield f"data: {thinking_chunk.model_dump_json()}\n\n"
 
+        # Send searching status (agent may search knowledge base)
+        searching_chunk = StreamChunk(
+            content="", done=False, status=StreamStatus.SEARCHING
+        )
+        yield f"data: {searching_chunk.model_dump_json()}\n\n"
+
         first_chunk = True
         async for content in agent_service.stream_response(
             message=chat_request.message,

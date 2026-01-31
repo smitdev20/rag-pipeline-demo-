@@ -2,31 +2,18 @@
 
 Core module for the chatbot's intelligence and conversation handling.
 
-Architecture Decisions (why we layer on top of Agno's built-ins):
+Architecture Decisions:
 
-1. **SQLite Storage** - Agno's Agent has no default persistence. Without explicit
-   storage, session_id is ignored and every request is stateless. SQLite gives us:
-   - Conversation continuity across server restarts
-   - Multi-turn context without client-side history management
-   - Zero infrastructure (single file, no external DB required for dev)
+1. **SQLite Storage** - Agno's Agent has no default persistence. SQLite provides
+   conversation continuity across server restarts with zero infrastructure.
 
-2. **Singleton Pattern** - Agent initialization is expensive (model loading, storage
-   connection). The singleton ensures we reuse the same agent instance across all
-   requests rather than recreating it per-request.
+2. **Singleton Pattern** - Agent initialization is expensive (model loading,
+   storage connection). Singleton ensures reuse across all requests.
 
-3. **Service Wrapper** - Decouples our API from Agno's interface. If Agno's API
-   changes (as it did with add_history_to_messages -> add_history_to_context),
-   we only fix one place. Also lets us add custom error handling and logging.
+3. **Service Wrapper** - Decouples API from Agno's interface for maintainability.
 
-4. **Explicit num_history_messages** - Agno's default may include too much/little
-   context. We set 20 messages (~10 turns) to balance context quality vs token cost.
-
-5. **Streaming Generator** - Agno returns raw chunks with metadata. We extract just
-   the content string, providing a clean interface for the SSE endpoint.
-
-6. **LanceDB Knowledge Base** - Zero-config vector database for RAG. Like SQLite for
-   sessions, LanceDB stores vectors locally without external dependencies. Uploaded
-   PDFs are chunked, embedded, and made searchable for context injection.
+4. **LanceDB Knowledge Base** - Zero-config vector database for RAG. Stores
+   vectors locally without external dependencies.
 """
 
 import logging
@@ -44,7 +31,7 @@ from src.agent.config import AgentConfig, get_agent_config
 
 logger = logging.getLogger(__name__)
 
-# Store sessions and knowledge in project data directory
+# Data directories
 _DATA_DIR = Path(__file__).parent.parent.parent / "data"
 _SESSIONS_DB = _DATA_DIR / "sessions.db"
 _KNOWLEDGE_DIR = _DATA_DIR / "knowledge"
@@ -53,37 +40,22 @@ _KNOWLEDGE_DIR = _DATA_DIR / "knowledge"
 class AgentService:
     """Service for managing the Agno chat agent.
 
-    Wraps Agno's Agent with:
+    Provides:
     - Persistent SQLite storage for session history
     - LanceDB knowledge base for RAG document retrieval
     - Singleton lifecycle management
     - Clean streaming interface for SSE endpoints
-    - Centralized error handling
     """
 
     def __init__(self, config: AgentConfig | None = None) -> None:
-        """Initialize the agent service.
-
-        Args:
-            config: Optional agent configuration.
-                    Loads from environment if not provided.
-        """
+        """Initialize the agent service."""
         self._config = config or get_agent_config()
         self._storage = self._create_storage()
         self._knowledge = self._create_knowledge()
         self._agent = self._create_agent()
 
     def _create_storage(self) -> SqliteDb:
-        """Create SQLite storage for session persistence.
-
-        Why SQLite over in-memory:
-        - Survives server restarts (critical for dev with --reload)
-        - Allows inspecting conversation history for debugging
-        - Zero-config, no external dependencies
-
-        Returns:
-            Configured SqliteDb instance.
-        """
+        """Create SQLite storage for session persistence."""
         _DATA_DIR.mkdir(parents=True, exist_ok=True)
         return SqliteDb(
             db_file=str(_SESSIONS_DB),
@@ -91,31 +63,14 @@ class AgentService:
         )
 
     def _create_embedder(self) -> OpenAIEmbedder:
-        """Create embedder using the configured API settings.
-
-        Uses the same base_url and api_key as the chat model,
-        allowing OpenAI-compatible APIs for embeddings.
-
-        Returns:
-            Configured OpenAIEmbedder instance.
-        """
+        """Create embedder using configured API settings."""
         return OpenAIEmbedder(
             api_key=self._config.api_key,
             base_url=self._config.base_url,
         )
 
     def _create_knowledge(self) -> Knowledge:
-        """Create LanceDB-backed knowledge base for RAG.
-
-        Why LanceDB:
-        - Zero-config local vector database (like SQLite for vectors)
-        - No external dependencies or services required
-        - Semantic vector search for document retrieval
-        - Survives server restarts
-
-        Returns:
-            Configured Knowledge instance.
-        """
+        """Create LanceDB-backed knowledge base for RAG."""
         _KNOWLEDGE_DIR.mkdir(parents=True, exist_ok=True)
 
         vector_db = LanceDb(
@@ -124,14 +79,12 @@ class AgentService:
             embedder=self._create_embedder(),
         )
 
-        return Knowledge(vector_db=vector_db)
+        knowledge = Knowledge(vector_db=vector_db)
+        # Agno Knowledge has no load() method; vector_db is queried directly at runtime.
+        return knowledge
 
     def _create_agent(self) -> Agent:
-        """Create the Agno agent instance.
-
-        Returns:
-            Configured Agent with OpenAI-compatible model, SQLite storage, and knowledge base.
-        """
+        """Create the Agno agent instance."""
         model = OpenAIChat(
             id=self._config.model_name,
             api_key=self._config.api_key,
@@ -144,22 +97,51 @@ class AgentService:
             model=model,
             db=self._storage,
             knowledge=self._knowledge,
-            description="A helpful RAG chatbot assistant with access to uploaded documents.",
+            description="A helpful RAG chatbot assistant with document access.",
             instructions=[
                 "Provide helpful and accurate responses.",
-                "When relevant documents are available, reference them in your answers.",
-                "Cite specific information from documents when answering questions.",
+                "Answer strictly using the retrieved document context.",
+                (
+                    "If the answer is not in the documents, say: "
+                    "'This information is not present in the provided document.'"
+                ),
+                (
+                    "When grouping or categorizing content, use only the exact "
+                    "categories defined in the document. Do not introduce new ones."
+                ),
+                (
+                    "Do not answer metadata questions (author, publisher, date) "
+                    "unless explicitly stated in the document."
+                ),
+                "Cite specific information from documents when answering.",
+                "Include short direct quotes from documents to support answers.",
                 "Be concise yet thorough.",
             ],
-            # History config: include last 20 messages (~10 conversation turns)
-            # in context. Balances continuity vs token cost.
             add_history_to_context=True,
             num_history_messages=20,
-            # Enable agentic RAG - agent decides when to search knowledge base
             search_knowledge=True,
-            # Output as markdown for rich formatting in UI
             markdown=True,
         )
+
+    async def _remove_existing_document(self, name: str) -> bool:
+        """Remove existing document chunks by name to prevent duplicates."""
+        try:
+            vector_db = self._knowledge.vector_db
+            if not vector_db or not hasattr(vector_db, "db"):
+                return False
+
+            table_name = getattr(vector_db, "table_name", "documents")
+            if table_name not in vector_db.db.table_names():
+                return False
+
+            table = vector_db.db.open_table(table_name)
+            table.delete(f'name = "{name}"')
+            logger.info(f"Removed existing document chunks: {name}")
+            return True
+
+        except Exception as e:
+            logger.warning(f"Could not remove existing document {name}: {e}")
+            return False
 
     async def add_document(
         self,
@@ -169,27 +151,26 @@ class AgentService:
     ) -> None:
         """Add a document to the knowledge base.
 
-        Adds text content to the knowledge base for RAG retrieval.
-
-        Args:
-            content: The text content of the document.
-            name: Document name/identifier (e.g., filename).
-            metadata: Optional metadata (author, title, etc.).
+        If a document with the same name exists, it is replaced.
         """
         if not content.strip():
             logger.warning(f"Skipping empty document: {name}")
             return
 
+        # Remove existing document to prevent duplicates
+        await self._remove_existing_document(name)
+
         doc_metadata: dict[str, str] = {}
         if metadata:
             doc_metadata.update({k: v for k, v in metadata.items() if v is not None})
 
-        # Add content to knowledge base using Agno's API
+        # Add content to knowledge base (already searchable after add_content_async)
         await self._knowledge.add_content_async(
             name=name,
             text_content=content,
             metadata=doc_metadata if doc_metadata else None,
         )
+
         logger.info(f"Added document to knowledge base: {name}")
 
     async def stream_response(
@@ -197,18 +178,7 @@ class AgentService:
         message: str,
         session_id: str,
     ) -> AsyncGenerator[str]:
-        """Stream response chunks for a message.
-
-        Yields response tokens as they arrive.
-        Agno automatically maintains conversation history per session.
-
-        Args:
-            message: The user's message.
-            session_id: Session identifier for history tracking.
-
-        Yields:
-            Response text chunks as they arrive.
-        """
+        """Stream response chunks for a message."""
         try:
             response_stream = self._agent.arun(
                 message,
@@ -224,18 +194,12 @@ class AgentService:
             yield f"\n\n[Error: {e}]"
 
 
-# Module-level singleton instance
+# Singleton instance
 _agent_service: AgentService | None = None
 
 
 def get_agent_service() -> AgentService:
-    """Get or create the global agent service.
-
-    Uses singleton pattern for resource efficiency.
-
-    Returns:
-        The AgentService instance.
-    """
+    """Get or create the global agent service."""
     global _agent_service
     if _agent_service is None:
         _agent_service = AgentService()
